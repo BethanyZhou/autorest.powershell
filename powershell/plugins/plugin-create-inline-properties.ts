@@ -213,7 +213,6 @@ function createVirtualProperties(schema: ObjectSchema, stack: Array<string>, thr
         required: property.required || property.language.default.required,
       };
       virtualProperties.owned.push(privateProperty);
-
       for (const inlinedProperty of [...virtualChildProperties.inherited, ...virtualChildProperties.owned]) {
         // child properties are be inlined without prefixing the name with the property name
         // unless there is a collision, in which case, we have to resolve 
@@ -222,7 +221,9 @@ function createVirtualProperties(schema: ObjectSchema, stack: Array<string>, thr
         // deeper child properties should be inlined with their parent's name 
         // ie, this.[properties].owner.name should be this.ownerName 
 
-        const proposedName = getPascalIdentifier(`${propertyName === 'properties' || /*objectProperties.length === 1*/ propertyName === 'error' ? '' : pascalCase(fixLeadingNumber(deconstruct(propertyName)).map(each => singularize(each)))} ${inlinedProperty.name}`);
+        const proposedName = getPascalIdentifier(`${propertyName === 'properties'
+          || propertyName === 'error'
+          || propertyName === 'identity' && inlinedProperty.Name === 'UserAssignedIdentities' ? '' : pascalCase(fixLeadingNumber(deconstruct(propertyName)).map(each => singularize(each)))} ${inlinedProperty.name}`);
 
         const components = [...removeSequentialDuplicates([propertyName, ...inlinedProperty.nameComponents])];
         let readonly = inlinedProperty.readOnly || property.readOnly;
@@ -376,7 +377,6 @@ function createVirtualParameters(operation: CommandOperation) {
           } else if (operation.operationType === OperationType.Update && !(<VirtualProperty>virtualProperty).update) {
             continue;
           }
-
           virtualParameters.body.push({
             name: virtualProperty.name,
             description: virtualProperty.property.language.default.description,
@@ -411,7 +411,6 @@ function createVirtualParameters(operation: CommandOperation) {
   operation.details.default.virtualParameters = virtualParameters;
 }
 
-
 async function createVirtuals(state: State): Promise<PwshModel> {
   /* 
     A model class should provide inlined properties for anything in a property called properties
@@ -422,7 +421,6 @@ async function createVirtuals(state: State): Promise<PwshModel> {
   */
   const threshold = await state.getValue('inlining-threshold', 24);
   const conflicts = new Array<string>();
-
   for (const schema of values(state.model.schemas.objects)) {
     // did we already inline this objecct
     if (schema.language.default.inlined) {

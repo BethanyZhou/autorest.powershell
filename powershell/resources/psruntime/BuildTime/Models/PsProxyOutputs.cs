@@ -186,11 +186,21 @@ namespace Microsoft.Rest.ClientRuntime.PowerShell
     internal class BaseOutput
     {
         public VariantGroup VariantGroup { get; }
+        protected Parameter[] Parameters { get; }
 
         protected static readonly bool IsAzure = Convert.ToBoolean(@"${$project.azure}");
+        protected static readonly bool keepIdentityType = Convert.ToBoolean(@"${$project.keepIdentityType}");
+        protected static readonly bool flattenUserAssignedIdentity = Convert.ToBoolean(@"${$project.flattenUserAssignedIdentity}");
+
         public BaseOutput(VariantGroup variantGroup)
         {
             VariantGroup = variantGroup;
+            var parameterList = new List<Parameter>();
+            foreach (var variant in VariantGroup.Variants)
+            {
+                parameterList.AddRange(variant.Parameters);
+            }
+            Parameters = parameterList.ToArray();
         }
         public string ClearTelemetryContext()
         {
@@ -249,6 +259,7 @@ namespace Microsoft.Rest.ClientRuntime.PowerShell
 {Indent}{Indent}$parameterSet = $PSCmdlet.ParameterSetName
 {GetTelemetry()}
 {GetParameterSetToCmdletMapping()}{GetDefaultValuesStatements()}
+{GetManagedIdentityMappingStatements()}
 {GetProcessCustomAttributesAtRuntime()}
 {Indent}{Indent}$wrappedCmd = $ExecutionContext.InvokeCommand.GetCommand(($mapping[$parameterSet]), [System.Management.Automation.CommandTypes]::Cmdlet)
 {Indent}{Indent}$scriptCmd = {{& $wrappedCmd @PSBoundParameters}}
@@ -293,6 +304,79 @@ namespace Microsoft.Rest.ClientRuntime.PowerShell
                 sb.AppendLine($"{Indent}{Indent}{Indent}$PSBoundParameters['{parameterName}'] = {defaultInfo.Script}");
                 sb.Append($"{Indent}{Indent}}}");
             }
+            return sb.ToString();
+        }
+
+        private string GetManagedIdentityMappingStatements()
+        {
+            var sb = new StringBuilder();
+            if (IsAzure &&
+             !VariantGroup.ContainsInternalCmdlet &&
+             (VariantGroup.CmdletVerb.Equals("New") || VariantGroup.CmdletVerb.Equals("Update")))
+            {
+                var statement1 = GetUserAssignedIdentityMappingStatements();
+                if (!string.IsNullOrWhiteSpace(statement1)) sb.Append(statement1);
+                var statement2 = GetSystemAssignedIdentityMappingStatements();
+                if (!string.IsNullOrWhiteSpace(statement2)) sb.Append(statement2);
+            }
+            return sb.ToString();
+        }
+
+        private string GetUserAssignedIdentityMappingStatements()
+        {
+            var sb = new StringBuilder();
+            if (flattenUserAssignedIdentity && this.Parameters.ContainsUserAssignedIdentityParameter())
+            {
+                sb.AppendLine($"{Indent}{Indent}if ($PSBoundParameters.ContainsKey('UserAssignedIdentity')) {{");
+                sb.AppendLine($"{Indent}{Indent}{Indent}$UserAssignedIdentityHashTable = @{{}}");
+                sb.AppendLine($"{Indent}{Indent}{Indent}$PSBoundParameters['UserAssignedIdentity'] | foreach {{$UserAssignedIdentityHashTable[$_] = @{{}} }}");
+                sb.AppendLine($"{Indent}{Indent}{Indent}$PSBoundParameters['UserAssignedIdentity'] = $UserAssignedIdentityHashTable");
+                sb.AppendLine($"{Indent}{Indent}}}");
+            }
+            return sb.ToString();
+        }
+
+        private string GetSystemAssignedIdentityMappingStatements()
+        {
+            if (!keepIdentityType && this.Parameters.ContainsEnableSystemAssignedIdentityParameter())
+            {
+                if (VariantGroup.CmdletVerb.Equals("New"))
+                {
+                    return GetSystemAssignedIdentityMappingStatementsForNewVerbCmdlet();
+                }
+                else if (VariantGroup.CmdletVerb.Equals("Update"))
+                {
+                    return GetSystemAssignedIdentityMappingStatementsForUpdateVerbCmdlet();
+                }
+            }
+            return "";
+        }
+
+        private string GetSystemAssignedIdentityMappingStatementsForNewVerbCmdlet()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"{Indent}{Indent}if ($PSBoundParameters.ContainsKey('EnableSystemAssignedIdentity') -and $PSBoundParameters['EnableSystemAssignedIdentity'].IsPresent) {{");
+            sb.AppendLine($"{Indent}{Indent}{Indent}$IdentityType = 'SystemAssigned'");
+            sb.AppendLine($"{Indent}{Indent}{Indent}$PSBoundParameters['IdentityType'] = $IdentityType");
+            sb.AppendLine($"{Indent}{Indent}}}");
+            sb.AppendLine($"{Indent}{Indent}$null = $PSBoundParameters.Remove('EnableSystemAssignedIdentity')");
+            return sb.ToString();
+        }
+
+        private string GetSystemAssignedIdentityMappingStatementsForUpdateVerbCmdlet()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"{Indent}{Indent}$IdentityType = 'None'");
+            sb.AppendLine($"{Indent}{Indent}if ($PSBoundParameters.ContainsKey('EnableSystemAssignedIdentity')) {{");
+            sb.AppendLine($"{Indent}{Indent}{Indent}if ($true -eq $PSBoundParameters['EnableSystemAssignedIdentity']) {{");
+            sb.AppendLine($"{Indent}{Indent}{Indent}{Indent}$IdentityType = 'SystemAssigned'");
+            sb.AppendLine($"{Indent}{Indent}{Indent}}}");
+            sb.AppendLine($"{Indent}{Indent}{Indent}elseif($false -eq $PSBoundParameters['EnableSystemAssignedIdentity']) {{");
+            sb.AppendLine($"{Indent}{Indent}{Indent}{Indent}$IdentityType = 'DisableSystemAssigned'");
+            sb.AppendLine($"{Indent}{Indent}{Indent}}}");
+            sb.AppendLine($"{Indent}{Indent}{Indent}$null = $PSBoundParameters.Remove('EnableSystemAssignedIdentity')");
+            sb.AppendLine($"{Indent}{Indent}}}");
+            sb.AppendLine($"{Indent}{Indent}$PSBoundParameters['IdentityType'] = $IdentityType");
             return sb.ToString();
         }
     }
